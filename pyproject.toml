@@ -1,0 +1,48 @@
+[build-system]
+requires = ["hatchling", "hatch-vcs", "wheel"]
+build-backend = "hatchling.build"
+
+[project]
+name = "tanat-utils"
+description = "Utilities for TanaT"
+dependencies = ["pydantic>=2.0"]
+requires-python = ">=3.9"
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+]
+readme = "README.md"
+dynamic = ["version"]
+authors = [
+    { name = "Arnaud Duvermy", email = "arnaud.duvermy@inria.fr" },
+    { name = "Thomas Guyet", email = "thomas.guyet@inria.fr" },
+]
+
+[project.license]
+file = "LICENSE.txt"
+
+[project.urls]
+Homepage = "https://github.com/TanaT-Lab/tanat-utils"
+Source = "https://github.com/TanaT-Lab/tanat-utils"
+Issues = "https://github.com/TanaT-Lab/tanat-utils/issues"
+
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.version.raw-options]
+version_scheme = "no-guess-dev"
+local_scheme = "no-local-version"
+
+[tool.hatch.build.hooks.vcs]
+version-file = "src/tanat_utils/version.py"
+template = """
+VERSION = {version!r}
+VERSION_TUPLE = {version_tuple!r}
+"""
+
+[project.optional-dependencies]
+test = [
+    "pytest",
+    "pytest-cov",
+]
