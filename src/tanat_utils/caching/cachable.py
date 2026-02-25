@@ -3,14 +3,22 @@
 CachableSettings mixin - Unified settings + cache synchronization.
 """
 
+from __future__ import annotations
+
+import json
 import logging
 import dataclasses
 import functools
 import threading
 from collections import OrderedDict
 from inspect import signature
+from typing import TYPE_CHECKING
 
 from .fingerprint import fingerprint, _serialize
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
 
 LOGGER = logging.getLogger(__name__)
 
@@ -218,17 +226,20 @@ class CachableSettings:
 
         # Add settings
         if self._settings is not None:
-            config["settings"] = dataclasses.asdict(self._settings)
+            # Use Pydantic serialization (handles nested Registrable)
+            # Try to use .model_dump() injected by @settings_dataclass
+            config["settings"] = self._settings.model_dump(mode="json")
 
         return config
 
     @classmethod
-    def from_config(cls, config):
+    def from_config(cls, config, **kwargs):
         """
         Reconstruct from config dict.
 
         Args:
             config: {"type": "name", "settings": {...}}
+            **kwargs: Additional arguments passed to the constructor
         """
         config = config.copy()
         type_name = config.pop("type", None)
@@ -242,7 +253,18 @@ class CachableSettings:
             target_cls = cls.get_registered(type_name)  # pylint: disable=no-member
 
         # Build instance
-        return target_cls(settings=settings_dict) if settings_dict else target_cls()
+        return (
+            target_cls(settings=settings_dict, **kwargs)
+            if settings_dict
+            else target_cls(**kwargs)
+        )
+
+    def save_config(self, path: str | Path) -> dict:
+        """Persists the current configuration to disk."""
+        config = self.to_config()
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(config, f, indent=4)
+        return config
 
     # -------------------------------------------------------------------------
     # Shadow Views (Internal)
