@@ -3,11 +3,12 @@
 Fingerprint generation for cache integrity.
 """
 
-import hashlib
 import dataclasses
+import hashlib
+from typing import Any
 
 
-def fingerprint(obj):
+def fingerprint(obj: Any) -> str:
     """
     Generate a unique fingerprint (hash) for an object.
 
@@ -27,7 +28,7 @@ def fingerprint(obj):
     return hashlib.md5(_serialize(obj).encode(), usedforsecurity=False).hexdigest()
 
 
-def _serialize(obj):
+def _serialize(obj: Any) -> str:
     """Serialize object to a stable string representation."""
     # Custom fingerprint method
     if hasattr(obj, "__fingerprint__"):

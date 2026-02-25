@@ -7,27 +7,30 @@ from __future__ import annotations
 
 import dataclasses
 import functools
+import json
 import logging
 from collections import OrderedDict
-from typing import TYPE_CHECKING
-import json
 from inspect import signature
+from pathlib import Path
+from typing import Any, Callable, Iterable
 
-from pydantic.dataclasses import dataclass as pydantic_dataclass
 from pydantic import ConfigDict, TypeAdapter
+from pydantic.dataclasses import dataclass as pydantic_dataclass
 
-from .cachable import Cachable, _make_hashable, _LazyRLock
+from .cachable import Cachable, _LazyRLock, _make_hashable
 from .fingerprint import _serialize, fingerprint
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 LOGGER = logging.getLogger(__name__)
 
 DEFAULT_CONFIG = ConfigDict(frozen=True, validate_default=True, kw_only=True)
 
 
-def settings_dataclass(cls=None, *, config=None, **kwargs):
+def settings_dataclass(
+    cls: type | None = None,
+    *,
+    config: ConfigDict | None = None,
+    **kwargs: Any,
+) -> type | Callable[[type], type]:
     """
     Decorator for settings dataclasses.
 
@@ -124,7 +127,7 @@ class CachableSettings(Cachable):
     SETTINGS_CLASS = None
     SHADOW_CACHE_SIZE = 8
 
-    def __init__(self, settings=None):
+    def __init__(self, settings: Any = None) -> None:
         """
         Initialize with settings.
 
@@ -138,7 +141,7 @@ class CachableSettings(Cachable):
         )
         self._shadow_cache = OrderedDict()  # LRU cache for shadows
 
-    def _validate_settings(self, settings):
+    def _validate_settings(self, settings: Any) -> Any:
         """Validate and normalize settings input."""
         if self.SETTINGS_CLASS is None:
             if settings is not None:
@@ -163,12 +166,12 @@ class CachableSettings(Cachable):
         return settings
 
     @property
-    def settings(self):
+    def settings(self) -> Any:
         """Current settings (immutable)."""
         return self._settings
 
     @property
-    def cache_fingerprint(self):
+    def cache_fingerprint(self) -> str | None:
         """Current fingerprint for cache keying."""
         return self._fingerprint
 
@@ -176,7 +179,7 @@ class CachableSettings(Cachable):
     # Settings Management
     # -------------------------------------------------------------------------
 
-    def update_settings(self, settings=None, **kwargs):
+    def update_settings(self, settings: Any = None, **kwargs: Any) -> CachableSettings:
         """
         Update settings and clear cache.
 
@@ -236,13 +239,13 @@ class CachableSettings(Cachable):
     # Config Serialization
     # -------------------------------------------------------------------------
 
-    def to_config(self):
+    def to_config(self) -> dict[str, Any]:
         """
         Export as reconstructable config dict.
 
         Returns:
-            {"type": "name", "settings": {...}} if Registrable
-            {"settings": {...}} otherwise
+            ``{"type": "name", "settings": {...}}`` if Registrable,
+            ``{"settings": {...}}`` otherwise.
         """
         config = {}
 
@@ -259,13 +262,13 @@ class CachableSettings(Cachable):
         return config
 
     @classmethod
-    def from_config(cls, config, **kwargs):
+    def from_config(cls, config: dict[str, Any], **kwargs: Any) -> CachableSettings:
         """
         Reconstruct from config dict.
 
         Args:
-            config: {"type": "name", "settings": {...}}
-            **kwargs: Additional arguments passed to the constructor
+            config: ``{"type": "name", "settings": {...}}``
+            **kwargs: Additional arguments passed to the constructor.
         """
         config = config.copy()
         type_name = config.pop("type", None)
@@ -285,7 +288,7 @@ class CachableSettings(Cachable):
             else target_cls(**kwargs)
         )
 
-    def save_config(self, path: str | Path) -> dict:
+    def save_config(self, path: str | Path) -> dict[str, Any]:
         """Persists the current configuration to disk."""
         config = self.to_config()
         with open(path, "w", encoding="utf-8") as f:
@@ -296,7 +299,7 @@ class CachableSettings(Cachable):
     # Shadow Views (Internal)
     # -------------------------------------------------------------------------
 
-    def _get_or_create_shadow(self, overrides):
+    def _get_or_create_shadow(self, overrides: dict[str, Any]) -> CachableSettings:
         """Get existing shadow from LRU cache or create new one."""
         new_settings = dataclasses.replace(self._settings, **overrides)
         new_fp = fingerprint(new_settings)
@@ -328,7 +331,11 @@ class CachableSettings(Cachable):
     # -------------------------------------------------------------------------
 
     @staticmethod
-    def cached_method(*, ignore=None, shadow_on=None):
+    def cached_method(
+        *,
+        ignore: Iterable[str] | None = None,
+        shadow_on: Iterable[str] | None = None,
+    ) -> Callable[..., Any]:
         """
         Decorator for cached methods.
 
@@ -431,9 +438,9 @@ class CachableSettings(Cachable):
 
         return decorator
 
-    def __fingerprint__(self):
+    def __fingerprint__(self) -> str:
         """Return serialized settings for fingerprinting."""
         return _serialize(self._settings)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"{self.__class__.__name__}(settings={self._settings!r})"

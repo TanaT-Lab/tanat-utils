@@ -5,16 +5,17 @@ Cachable mixin: cache infrastructure without settings management.
 
 from __future__ import annotations
 
-import logging
 import functools
+import logging
 import threading
 from collections import OrderedDict
 from inspect import signature
+from typing import Any, Callable, Iterable
 
 LOGGER = logging.getLogger(__name__)
 
 
-def _make_hashable(val):
+def _make_hashable(val: Any) -> Any:
     """Convert nested dicts/lists to hashable tuples."""
     if isinstance(val, dict):
         return tuple(sorted((k, _make_hashable(v)) for k, v in val.items()))
@@ -30,26 +31,26 @@ class _LazyRLock:
 
     __slots__ = ("_lock",)
 
-    def __init__(self):
-        self._lock = None
+    def __init__(self) -> None:
+        self._lock: threading.RLock | None = None
 
-    def _get_lock(self):
+    def _get_lock(self) -> threading.RLock:
         # Local var avoids repeated attribute lookup
         lock = self._lock
         if lock is None:
             self._lock = lock = threading.RLock()
         return lock
 
-    def __enter__(self):
+    def __enter__(self) -> Any:
         return self._get_lock().__enter__()
 
-    def __exit__(self, *args):
+    def __exit__(self, *args: Any) -> bool | None:
         return self._get_lock().__exit__(*args)
 
-    def __getstate__(self):
+    def __getstate__(self) -> dict[str, None]:
         return {}
 
-    def __setstate__(self, state):
+    def __setstate__(self, state: dict[str, None]) -> None:
         self._lock = None
 
 
@@ -60,17 +61,17 @@ class Cachable:
 
     CACHE_SIZE = 32
 
-    def __init__(self):
-        self._cache = OrderedDict()
+    def __init__(self) -> None:
+        self._cache: OrderedDict[str, Any] = OrderedDict()
         self._lock = _LazyRLock()
 
-    def clear_cache(self):
+    def clear_cache(self) -> None:
         """Clear all cached values."""
         with self._lock:
             self._cache.clear()
 
     @staticmethod
-    def cached_property(method):
+    def cached_property(method: Callable[..., Any]) -> property:
         """
         Decorator for cached properties with double-check locking.
 
@@ -101,7 +102,7 @@ class Cachable:
         return wrapper
 
     @staticmethod
-    def cached_method(*, ignore=None):
+    def cached_method(*, ignore: Iterable[str] | None = None) -> Callable[..., Any]:
         """
         Decorator for cached methods (``ignore`` only, no shadow support).
 
@@ -153,13 +154,13 @@ class Cachable:
 
         return decorator
 
-    def __getstate__(self):
+    def __getstate__(self) -> dict[str, Any]:
         """Pickle support - exclude lock."""
         state = self.__dict__.copy()
         state["_lock"] = None
         return state
 
-    def __setstate__(self, state):
+    def __setstate__(self, state: dict[str, Any]) -> None:
         """Unpickle support - recreate lock."""
         self.__dict__.update(state)
         self._lock = _LazyRLock()
