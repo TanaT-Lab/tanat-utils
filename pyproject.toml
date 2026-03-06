@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "tanat-utils"
 description = "Utilities for TanaT"
-dependencies = ["pydantic>=2.0"]
+dependencies = ["pydantic>=2.0", "tqdm>=4.15"]
 requires-python = ">=3.9"
 classifiers = [
     "License :: OSI Approved :: MIT License",
