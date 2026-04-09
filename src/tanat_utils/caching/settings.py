@@ -96,47 +96,44 @@ def settings_dataclass(
 
 
 # -------------------------------------------------------------------------
-# CachableSettings Mixin
+# SettingsMixin
 # -------------------------------------------------------------------------
 
 
-class CachableSettings(Cachable):
+class SettingsMixin:
     """
-    Cache + settings synchronization mixin.
+    Settings management mixin.
 
-    Adds settings management (fingerprint-based cache invalidation,
-    shadow views for temporary overrides) on top of :class:`Cachable`.
+    Provides settings storage, fingerprinting, shadow views, and serialisation.
+    Can be used standalone (no cache) or combined with :class:`Cachable` via
+    :class:`CachableSettings`.
 
     Example::
 
         @settings_dataclass
         class MySettings:
-            param: int = 10
+            alpha: float = 0.5
 
-        class MyClass(CachableSettings):
+        class MyProcessor(SettingsMixin):
             SETTINGS_CLASS = MySettings
 
-            @CachableSettings.cached_property
-            def result(self):
-                return expensive_computation()
+            def __init__(self, alpha=0.5):
+                super().__init__(settings=MySettings(alpha=alpha))
+
+            def __call__(self, x, **kwargs):
+                target = self._get_or_create_shadow(kwargs) if kwargs else self
+                return x * target.settings.alpha
     """
 
     SETTINGS_CLASS = None
     SHADOW_CACHE_SIZE = 8
 
     def __init__(self, settings: Any = None) -> None:
-        """
-        Initialize with settings.
-
-        Args:
-            settings: Settings instance, dict, or None (uses defaults if SETTINGS_CLASS defined)
-        """
-        super().__init__()  # initializes _cache and _lock
         self._settings = self._validate_settings(settings)
         self._fingerprint = (
             fingerprint(self._settings) if self._settings is not None else None
         )
-        self._shadow_cache = OrderedDict()  # LRU cache for shadows
+        self._shadow_cache: OrderedDict = OrderedDict()
 
     def _validate_settings(self, settings: Any) -> Any:
         """Validate and normalize settings input."""
@@ -176,16 +173,12 @@ class CachableSettings(Cachable):
     # Settings Management
     # -------------------------------------------------------------------------
 
-    def update_settings(self, settings: Any = None, **kwargs: Any) -> CachableSettings:
+    def update_settings(self, settings: Any = None, **kwargs: Any) -> SettingsMixin:
         """
-        Update settings and clear cache.
+        Replace settings and clear shadow cache.
 
-        Accepts either:
-        - A settings dataclass instance
-        - A dict of field values
-        - Keyword arguments for field values
-
-        The cache is cleared because cached values may depend on old settings.
+        Accepts either a settings dataclass instance, a dict of field values,
+        or keyword arguments for field values.
 
         Args:
             settings: Settings instance or dict (optional)
@@ -194,7 +187,8 @@ class CachableSettings(Cachable):
         Returns:
             self (for method chaining)
 
-        Example:
+        Example::
+
             processor.update_settings(param=10)
             processor.update_settings({"param": 10})
             processor.update_settings(MySettings(param=10))
@@ -202,35 +196,129 @@ class CachableSettings(Cachable):
         if self.SETTINGS_CLASS is None:
             raise ValueError("Cannot update settings: SETTINGS_CLASS is None")
 
-        with self._lock:
-            if settings is not None:
-                if isinstance(settings, dict):
-                    # Dict: merge with kwargs
-                    kwargs = {**settings, **kwargs}
-                # pylint: disable=isinstance-second-argument-not-valid-type
-                elif isinstance(settings, self.SETTINGS_CLASS):
-                    # Dataclass instance: use directly if no kwargs
-                    if not kwargs:
-                        self._settings = settings
-                        self._fingerprint = fingerprint(self._settings)
-                        self._cache.clear()
-                        self._shadow_cache.clear()
-                        return self
-                    # Otherwise extract fields and merge with kwargs
-                    kwargs = {**dataclasses.asdict(settings), **kwargs}
-                else:
-                    raise TypeError(
-                        f"settings must be {self.SETTINGS_CLASS.__name__} or dict, "
-                        f"got {type(settings).__name__}"
-                    )
+        if settings is not None:
+            if isinstance(settings, dict):
+                kwargs = {**settings, **kwargs}
+            # pylint: disable=isinstance-second-argument-not-valid-type
+            elif isinstance(settings, self.SETTINGS_CLASS):
+                if not kwargs:
+                    self._settings = settings
+                    self._fingerprint = fingerprint(self._settings)
+                    self._shadow_cache.clear()
+                    return self
+                kwargs = {**dataclasses.asdict(settings), **kwargs}
+            else:
+                raise TypeError(
+                    f"settings must be {self.SETTINGS_CLASS.__name__} or dict, "
+                    f"got {type(settings).__name__}"
+                )
 
-            # Apply updates via dataclasses.replace
-            self._settings = dataclasses.replace(self._settings, **kwargs)
-            self._fingerprint = fingerprint(self._settings)
-            self._cache.clear()
-            self._shadow_cache.clear()
-
+        self._settings = dataclasses.replace(self._settings, **kwargs)
+        self._fingerprint = fingerprint(self._settings)
+        self._shadow_cache.clear()
         return self
+
+    # -------------------------------------------------------------------------
+    # Shadow Views
+    # -------------------------------------------------------------------------
+
+    def _get_or_create_shadow(self, overrides: dict[str, Any]) -> SettingsMixin:
+        """
+        Get or create a shadow view with overridden settings.
+
+        Keys in *overrides* that do not match a settings field are silently
+        ignored.  Returns ``self`` when no valid override remains.
+        Uses an LRU cache (keyed by fingerprint) to reuse shadows.
+
+        Args:
+            overrides: Mapping of field names to override values.
+                Non-settings keys are filtered out automatically.
+        """
+        if not overrides:
+            return self
+
+        # Filter to known settings fields
+        settings_fields = set(self._settings.__dataclass_fields__.keys())
+        valid = {k: v for k, v in overrides.items() if k in settings_fields}
+        if not valid:
+            return self
+
+        new_settings = dataclasses.replace(self._settings, **valid)
+        new_fp = fingerprint(new_settings)
+
+        # LRU lookup
+        if new_fp in self._shadow_cache:
+            self._shadow_cache.move_to_end(new_fp)
+            return self._shadow_cache[new_fp]
+
+        # Create new shadow
+        shadow = object.__new__(self.__class__)
+        shadow.__dict__.update(self.__dict__)
+        # pylint: disable=protected-access
+        shadow._settings = new_settings
+        shadow._fingerprint = new_fp
+        shadow._shadow_cache = OrderedDict()
+
+        # LRU insert + eviction
+        self._shadow_cache[new_fp] = shadow
+        if len(self._shadow_cache) > self.SHADOW_CACHE_SIZE:
+            self._shadow_cache.popitem(last=False)
+
+        return shadow
+
+    @staticmethod
+    def shadow_dispatch(*args: str | Callable) -> Callable:
+        """
+        Decorator that transparently handles shadow dispatch from ``**kwargs``.
+
+        Settings-matching kwargs are consumed to create (or reuse) a shadow
+        view; the method body receives only the remaining kwargs, with ``self``
+        already pointing to the correct target (shadow or original).
+
+        By default all settings fields are dispatched. Pass field names to
+        restrict which kwargs trigger a shadow::
+
+            @SettingsMixin.shadow_dispatch
+            @Cachable.cached_method()
+            def compute(self, x, **kwargs):
+                return x * self.settings.alpha
+
+            @SettingsMixin.shadow_dispatch("alpha")
+            @Cachable.cached_method()
+            def compute(self, x, **kwargs):
+                # only 'alpha' triggers a shadow; other settings kwargs
+                # pass through to the method body unchanged.
+                return x * self.settings.alpha
+        """
+
+        def _build(
+            method: Callable, dispatch_fields: frozenset[str] | None
+        ) -> Callable:
+            @functools.wraps(method)
+            def wrapper(self, *w_args, **kwargs):
+                if kwargs and self._settings is not None:
+                    settings_fields = set(self._settings.__dataclass_fields__.keys())
+                    consumed = (
+                        dispatch_fields & settings_fields
+                        if dispatch_fields is not None
+                        else settings_fields
+                    )
+                    target = self._get_or_create_shadow(
+                        {k: v for k, v in kwargs.items() if k in consumed}
+                    )
+                    remaining = {k: v for k, v in kwargs.items() if k not in consumed}
+                    return method(target, *w_args, **remaining)
+                return method(self, *w_args, **kwargs)
+
+            return wrapper
+
+        # @shadow_dispatch  (no parentheses)
+        if len(args) == 1 and callable(args[0]):
+            return _build(args[0], dispatch_fields=None)
+
+        # @shadow_dispatch("alpha", "beta")  or  @shadow_dispatch()
+        dispatch_fields = frozenset(args) if args else None
+        return lambda method: _build(method, dispatch_fields)
 
     # -------------------------------------------------------------------------
     # Config Serialization
@@ -245,21 +333,14 @@ class CachableSettings(Cachable):
             ``{"settings": {...}}`` otherwise.
         """
         config = {}
-
-        # Add type if Registrable (duck-typing via _REGISTER_NAME)
         if hasattr(self, "_REGISTER_NAME"):
             config["type"] = self.get_registration_name()
-
-        # Add settings
         if self._settings is not None:
-            # Use Pydantic serialization (handles nested Registrable)
-            # Try to use .model_dump() injected by @settings_dataclass
             config["settings"] = self._settings.model_dump(mode="json")
-
         return config
 
     @classmethod
-    def from_config(cls, config: dict[str, Any], **kwargs: Any) -> CachableSettings:
+    def from_config(cls, config: dict[str, Any], **kwargs: Any) -> SettingsMixin:
         """
         Reconstruct from config dict.
 
@@ -271,14 +352,12 @@ class CachableSettings(Cachable):
         type_name = config.pop("type", None)
         settings_dict = config.pop("settings", {})
 
-        # Resolve class (duck-typing via _REGISTER_NAME)
         target_cls = cls
         if type_name is not None:
             if not hasattr(cls, "_REGISTER_NAME"):
                 raise ValueError(f"{cls.__name__} is not Registrable")
             target_cls = cls.get_registered(type_name)  # pylint: disable=no-member
 
-        # Build instance
         return (
             target_cls(settings=settings_dict, **kwargs)
             if settings_dict
@@ -286,154 +365,15 @@ class CachableSettings(Cachable):
         )
 
     def save_config(self, path: str | Path) -> dict[str, Any]:
-        """Persists the current configuration to disk."""
+        """Persist the current configuration to disk."""
         config = self.to_config()
         with open(path, "w", encoding="utf-8") as f:
             json.dump(config, f, indent=4)
         return config
 
     # -------------------------------------------------------------------------
-    # Shadow Views (Internal)
+    # Fingerprint / repr
     # -------------------------------------------------------------------------
-
-    def _get_or_create_shadow(self, overrides: dict[str, Any]) -> CachableSettings:
-        """Get existing shadow from LRU cache or create new one."""
-        new_settings = dataclasses.replace(self._settings, **overrides)
-        new_fp = fingerprint(new_settings)
-
-        # Check LRU cache
-        if new_fp in self._shadow_cache:
-            self._shadow_cache.move_to_end(new_fp)  # Mark as recently used
-            return self._shadow_cache[new_fp]
-
-        # Create new shadow
-        shadow = object.__new__(self.__class__)
-        shadow.__dict__.update(self.__dict__)
-        # pylint: disable=protected-access
-        shadow._settings = new_settings
-        shadow._fingerprint = new_fp
-        shadow._cache = OrderedDict()
-        shadow._shadow_cache = OrderedDict()
-        shadow._lock = _LazyRLock()
-
-        # Add to LRU cache, evict oldest if full
-        self._shadow_cache[new_fp] = shadow
-        if len(self._shadow_cache) > self.SHADOW_CACHE_SIZE:
-            self._shadow_cache.popitem(last=False)
-
-        return shadow
-
-    # -------------------------------------------------------------------------
-    # Decorators
-    # -------------------------------------------------------------------------
-
-    @staticmethod
-    def cached_method(
-        *,
-        ignore: Iterable[str] | None = None,
-        shadow_on: Iterable[str] | None = None,
-    ) -> Callable[..., Any]:
-        """
-        Decorator for cached methods.
-
-        Args:
-            ignore: Iterable of argument names to exclude from cache key.
-            shadow_on: Iterable of argument names that trigger shadow views.
-                       Use ``"**kwargs"`` to auto-shadow any kwarg matching a settings field.
-                       Args in shadow_on are automatically excluded from the cache key.
-
-        Example::
-
-            @CachableSettings.cached_method(ignore=["verbose"], shadow_on=["**kwargs"])
-            def compute(self, x, verbose=False, **kwargs):
-                # x is in cache key, verbose is ignored, kwargs trigger shadow
-                return x * self.settings.n_iterations
-        """
-        ignore_set = set(ignore or [])
-        shadow_set = set(shadow_on or [])
-
-        def decorator(method):
-            method_sig = signature(method)
-
-            @functools.wraps(method)
-            def wrapper(self, *args, **kwargs):
-                # Bind arguments (before defaults) to detect explicit args
-                bound = method_sig.bind(self, *args, **kwargs)
-                explicit_args = set(bound.arguments.keys()) - {"self"}
-
-                # Also include keys from **kwargs if present
-                explicit_kwargs = set()
-                if "kwargs" in bound.arguments:
-                    explicit_kwargs = set(bound.arguments["kwargs"].keys())
-
-                bound.apply_defaults()
-
-                settings_overrides = {}
-                shadow_args_used = set()
-
-                if shadow_on:
-                    # pylint: disable=protected-access
-                    settings_fields = set(self._settings.__dataclass_fields__.keys())
-
-                    if "**kwargs" in shadow_set:
-                        # Any explicit kwarg matching a settings field triggers shadow
-                        shadow_args_used = explicit_kwargs & settings_fields
-                    else:
-                        # Only listed args trigger shadow (if they match settings)
-                        all_explicit = explicit_args | explicit_kwargs
-                        shadow_args_used = shadow_set & all_explicit & settings_fields
-
-                    for field in shadow_args_used:
-                        # Get value from kwargs dict or bound.arguments
-                        if (
-                            "kwargs" in bound.arguments
-                            and field in bound.arguments["kwargs"]
-                        ):
-                            settings_overrides[field] = bound.arguments["kwargs"][field]
-                        elif field in bound.arguments:
-                            settings_overrides[field] = bound.arguments[field]
-
-                target = (
-                    # pylint: disable=protected-access
-                    self._get_or_create_shadow(settings_overrides)
-                    if settings_overrides
-                    else self
-                )
-
-                # Build cache key: all args except self, ignored, and shadow args
-                excluded = ignore_set | shadow_args_used | {"self", "kwargs"}
-                cache_args = {}
-                for k, v in bound.arguments.items():
-                    if k == "kwargs":
-                        # Flatten **kwargs into cache_args (excluding shadow args)
-                        for kk, vv in v.items():
-                            if kk not in excluded and kk not in shadow_args_used:
-                                cache_args[kk] = vv
-                    elif k not in excluded:
-                        cache_args[k] = v
-
-                key_values = tuple(
-                    sorted((k, _make_hashable(v)) for k, v in cache_args.items())
-                )
-                cache_key = f"__method__{method.__name__}__{hash(key_values)}"
-
-                # pylint: disable=protected-access
-                with target._lock:
-                    # Check cache (with LRU update)
-                    if cache_key in target._cache:
-                        target._cache.move_to_end(cache_key)
-                        return target._cache[cache_key]
-
-                    # Compute and cache (with LRU eviction)
-                    value = method(target, *args, **kwargs)
-                    target._cache[cache_key] = value
-                    while len(target._cache) > target.CACHE_SIZE:
-                        target._cache.popitem(last=False)
-                    return value
-
-            return wrapper
-
-        return decorator
 
     def __fingerprint__(self) -> str:
         """Return serialized settings for fingerprinting."""
@@ -441,3 +381,4 @@ class CachableSettings(Cachable):
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}(settings={self._settings!r})"
+
