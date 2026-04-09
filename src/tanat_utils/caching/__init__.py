@@ -3,6 +3,12 @@
 
 from .cachable import Cachable
 from .fingerprint import fingerprint
-from .settings import settings_dataclass, CachableSettings
+from .settings import settings_dataclass, SettingsMixin, CachableSettings
 
-__all__ = ["settings_dataclass", "Cachable", "CachableSettings", "fingerprint"]
+__all__ = [
+    "settings_dataclass",
+    "Cachable",
+    "SettingsMixin",
+    "CachableSettings",
+    "fingerprint",
+]
