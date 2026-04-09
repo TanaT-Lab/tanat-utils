@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v0.0.4] - Mixin refactor
+
+### Added
+
+- `SettingsMixin`: standalone settings management (no cache dependency)
+- `shadow_dispatch` decorator with optional field targeting
+
+### Changed
+
+- Extract `Cachable` from `CachableSettings` (cache-only mixin, no settings)
+- `CachableSettings` now composes `SettingsMixin` + `Cachable`
+- `_get_or_create_shadow` filters non-settings keys automatically
+
 ## [v0.0.3] - Add pretty-format utilities
 
 ### Added
