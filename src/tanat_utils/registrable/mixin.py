@@ -124,6 +124,20 @@ def _import_types(suffix, base_class, submod="type"):
 class Registrable:
     """
     Base class for creating registrable class hierarchies.
+
+    Subclasses are automatically registered via ``__init_subclass__``.
+    Lookup is case-insensitive with close-match suggestions on error.
+    Integrates with Pydantic for string-based validation and serialization.
+
+    Example::
+
+        class BaseMetric(Registrable):
+            _REGISTER = {}
+
+        class Euclidean(BaseMetric, register_name="euclidean"):
+            pass
+
+        BaseMetric.get_registered("euclidean")  # -> Euclidean
     """
 
     _REGISTER_NAME = "_REGISTER"
@@ -379,8 +393,8 @@ class Registrable:
         Args:
             submod: Subdirectory name where subtypes are located.
 
-        Return:
-            Yield: Subtype classes found in the subdirectory
+        Yields:
+            Subtype classes found in the subdirectory.
         """
         try:
             yield from _import_types(cls.__name__, cls, submod=submod)
