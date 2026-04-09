@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-settings_dataclass decorator and CachableSettings mixin.
+settings_dataclass decorator, SettingsMixin and CachableSettings mixin.
 """
 
 from __future__ import annotations
@@ -11,14 +11,13 @@ import json
 import logging
 import warnings
 from collections import OrderedDict
-from inspect import signature
 from pathlib import Path
-from typing import Any, Callable, Iterable
+from typing import Any, Callable
 
 from pydantic import ConfigDict, TypeAdapter
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 
-from .cachable import Cachable, _LazyRLock, _make_hashable
+from .cachable import Cachable, _LazyRLock
 from .fingerprint import _serialize, fingerprint
 
 LOGGER = logging.getLogger(__name__)
@@ -382,3 +381,53 @@ class SettingsMixin:
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}(settings={self._settings!r})"
 
+
+# -------------------------------------------------------------------------
+# CachableSettings: SettingsMixin + Cachable
+# -------------------------------------------------------------------------
+
+
+class CachableSettings(SettingsMixin, Cachable):
+    """
+    Settings management + LRU caching mixin.
+
+    Combines :class:`SettingsMixin` (settings, shadow views, serialisation)
+    with :class:`Cachable` (LRU cache, :meth:`~Cachable.cached_method`,
+    :attr:`~Cachable.cached_property`).
+
+    Example::
+
+        @settings_dataclass
+        class MySettings:
+            param: int = 10
+
+        class MyClass(CachableSettings):
+            SETTINGS_CLASS = MySettings
+
+            @Cachable.cached_property
+            def result(self):
+                return expensive_computation()
+    """
+
+    def __init__(self, settings: Any = None) -> None:
+        SettingsMixin.__init__(self, settings)
+        Cachable.__init__(self)  # initialises _cache and _lock
+
+    def update_settings(self, settings: Any = None, **kwargs: Any) -> CachableSettings:
+        """Update settings, clear shadow cache AND computation cache."""
+        with self._lock:
+            super().update_settings(settings, **kwargs)
+            self.clear_cache()
+        return self
+
+    def _get_or_create_shadow(self, overrides: dict[str, Any]) -> CachableSettings:
+        """Shadow view also gets its own computation cache."""
+        shadow = super()._get_or_create_shadow(overrides)
+        # Newly created shadows share the parent's _cache reference; give them
+        # their own.  LRU-retrieved shadows already have a separate _cache.
+        if (
+            shadow is not self and shadow._cache is self._cache
+        ):  # pylint: disable=protected-access
+            shadow._cache = OrderedDict()  # pylint: disable=protected-access
+            shadow._lock = _LazyRLock()  # pylint: disable=protected-access
+        return shadow
