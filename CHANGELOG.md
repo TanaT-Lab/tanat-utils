@@ -1,6 +1,12 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [v0.0.2] - Add DisplayMixin
+
+### Added
+
+- `DisplayMixin` with box-drawing progress output
+- `DisplayIndentManager` for nested component display
 
 ## [v0.0.1] - Initial release
 
