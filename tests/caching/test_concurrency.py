@@ -10,7 +10,7 @@ Verifies that the caching system guarantees single execution under concurrent ac
 import time
 from concurrent.futures import ThreadPoolExecutor, wait
 
-from tanat_utils import settings_dataclass, CachableSettings
+from tanat_utils import settings_dataclass, Cachable, CachableSettings
 
 # =============================================================================
 # Fixtures
@@ -33,14 +33,14 @@ class SlowProcessor(CachableSettings):
         super().__init__(settings)
         self.execution_count = 0  # Simple counter, no lock
 
-    @CachableSettings.cached_method()
+    @Cachable.cached_method()
     def compute(self, x):
         """Slow computation - counter increment is unprotected on purpose."""
         self.execution_count += 1
         time.sleep(self.settings.delay)
         return x * 2
 
-    @CachableSettings.cached_property
+    @Cachable.cached_property
     def expensive_value(self):
         """Slow property - counter increment is unprotected on purpose."""
         self.execution_count += 1
