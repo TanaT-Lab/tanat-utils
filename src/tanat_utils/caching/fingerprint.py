@@ -16,8 +16,7 @@ def fingerprint(obj: Any) -> str:
     - Dataclasses (including nested)
     - Dicts, lists, tuples, sets
     - Primitives (str, int, float, bool, None)
-    - Objects with __fingerprint__ method
-    - Objects with settings attribute (CachableSettings)
+    - Objects implementing ``__fingerprint__`` (e.g. CachableSettings)
 
     Args:
         obj: Object to fingerprint
