@@ -9,6 +9,7 @@ import dataclasses
 import functools
 import json
 import logging
+import warnings
 from collections import OrderedDict
 from inspect import signature
 from pathlib import Path
@@ -59,7 +60,6 @@ def settings_dataclass(
         config = DEFAULT_CONFIG
 
     def decorator(cls):
-        # Manage kw_only: Default to True for better error messages and immutability, but allow override
         is_kw_only = kwargs.get("kw_only", config.get("kw_only", True))
         decorated = pydantic_dataclass(config=config, **kwargs, kw_only=is_kw_only)(cls)
 
@@ -72,7 +72,11 @@ def settings_dataclass(
         def new_init(self, **kwargs):  # pylint: disable=unused-argument
             extra = set(kwargs.keys()) - field_names
             if extra:
-                LOGGER.warning("%s: Unknown fields ignored: %s", cls.__name__, extra)
+                warnings.warn(
+                    f"{cls.__name__}: Unknown fields ignored: {extra}",
+                    UserWarning,
+                    stacklevel=2,
+                )
             filtered = {k: v for k, v in kwargs.items() if k in field_names}
             original_init(self, **filtered)
 
