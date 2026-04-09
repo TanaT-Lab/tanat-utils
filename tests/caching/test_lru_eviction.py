@@ -9,7 +9,7 @@ Verifies proper memory management of caches:
 - LRU ordering is maintained
 """
 
-from tanat_utils import settings_dataclass, CachableSettings
+from tanat_utils import settings_dataclass, CachableSettings, Cachable, SettingsMixin
 
 # =============================================================================
 # Fixtures
@@ -34,13 +34,14 @@ class SmallCacheProcessor(CachableSettings):
         super().__init__(settings)
         self.compute_count = 0
 
-    @CachableSettings.cached_method(shadow_on=["**kwargs"])
+    @SettingsMixin.shadow_dispatch
+    @Cachable.cached_method()
     def compute(self, x, **kwargs):
         """Computation with shadow support."""
         self.compute_count += 1
         return x * self.settings.param
 
-    @CachableSettings.cached_property
+    @Cachable.cached_property
     def expensive(self):
         """Cached property."""
         self.compute_count += 1
@@ -188,7 +189,7 @@ class TestMainCacheEdgeCases:
             SETTINGS_CLASS = LRUSettings
             CACHE_SIZE = 1
 
-            @CachableSettings.cached_method()
+            @Cachable.cached_method()
             def compute(self, x):
                 return x * 2
 
