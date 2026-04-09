@@ -11,7 +11,7 @@ Verifies that when a settings dataclass contains a CachableSettings instance:
 import pickle
 from dataclasses import field
 
-from tanat_utils import settings_dataclass, CachableSettings
+from tanat_utils import settings_dataclass, Cachable, CachableSettings
 from tanat_utils.caching.fingerprint import fingerprint
 
 # =============================================================================
@@ -31,7 +31,7 @@ class ChildProcessor(CachableSettings):
 
     SETTINGS_CLASS = ChildSettings
 
-    @CachableSettings.cached_method()
+    @Cachable.cached_method()
     def transform(self, x):
         return x * self.settings.multiplier
 
@@ -51,7 +51,7 @@ class ParentProcessor(CachableSettings):
 
     SETTINGS_CLASS = ParentSettings
 
-    @CachableSettings.cached_method()
+    @Cachable.cached_method()
     def compute(self, x):
         """Uses the child processor from settings."""
         return self.settings.child.transform(x) + len(self.settings.name)
