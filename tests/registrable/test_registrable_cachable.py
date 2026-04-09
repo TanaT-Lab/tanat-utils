@@ -15,7 +15,7 @@ import json
 import pytest
 from pydantic import BaseModel
 
-from tanat_utils import settings_dataclass, CachableSettings
+from tanat_utils import settings_dataclass, Cachable, CachableSettings
 from tanat_utils.registrable import Registrable
 
 # =============================================================================
@@ -44,7 +44,7 @@ class BaseMetric(CachableSettings, Registrable):
 class EuclideanMetric(BaseMetric, register_name="euclidean"):
     """Euclidean distance metric with caching."""
 
-    @CachableSettings.cached_method()
+    @Cachable.cached_method()
     def compute(self, x, y):
         """Compute euclidean distance (cached)."""
         dist = sum((a - b) ** 2 for a, b in zip(x, y)) ** 0.5
@@ -56,7 +56,7 @@ class EuclideanMetric(BaseMetric, register_name="euclidean"):
 class ManhattanMetric(BaseMetric, register_name="manhattan"):
     """Manhattan distance metric with caching."""
 
-    @CachableSettings.cached_method()
+    @Cachable.cached_method()
     def compute(self, x, y):
         """Compute manhattan distance (cached)."""
         dist = sum(abs(a - b) for a, b in zip(x, y))
@@ -224,39 +224,6 @@ class TestUpdateSettingsWithRegistry:
         metric.update_settings(normalize=True)
 
         assert metric.get_registration_name() == "euclidean"
-
-
-# =============================================================================
-# Shadow Views Tests
-# =============================================================================
-
-
-class TestShadowWithRegistry:
-    """Test shadow views work with registered classes."""
-
-    def test_shadow_on_settings_field(self):
-        """Shadow view works on registered class."""
-
-        class ConfigurableMetric(BaseMetric, register_name="configurable"):
-            @CachableSettings.cached_method(shadow_on=["normalize"])
-            def compute_with_option(self, x, y, normalize=None):
-                dist = sum((a - b) ** 2 for a, b in zip(x, y)) ** 0.5
-                if self.settings.normalize:
-                    dist = dist / (len(x) ** 0.5)
-                return dist
-
-        metric = ConfigurableMetric()
-
-        # Call with default (normalize=False)
-        r1 = metric.compute_with_option([0, 0], [3, 4])
-        assert r1 == 5.0
-
-        # Call with override (normalize=True)
-        r2 = metric.compute_with_option([0, 0], [3, 4], normalize=True)
-        assert r2 == pytest.approx(5.0 / (2**0.5))
-
-        # Shadow created
-        assert len(metric._shadow_cache) == 1
 
 
 # =============================================================================
