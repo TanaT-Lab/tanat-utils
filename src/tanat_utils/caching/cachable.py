@@ -56,7 +56,23 @@ class _LazyRLock:
 
 class Cachable:
     """
-    Cache mixin.
+    Thread-safe LRU cache mixin.
+
+    Provides ``cached_property`` and ``cached_method`` decorators backed by
+    an :class:`~collections.OrderedDict` with configurable ``CACHE_SIZE``.
+    Pickle-safe: the lock is lazily recreated after deserialization.
+
+    Example::
+
+        class MyClass(Cachable):
+
+            @Cachable.cached_property
+            def result(self):
+                return expensive_computation()
+
+            @Cachable.cached_method(ignore=["verbose"])
+            def compute(self, x, verbose=False):
+                return x * 2
     """
 
     CACHE_SIZE = 32
