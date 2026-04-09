@@ -13,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor, wait
 
 import pytest
 
-from tanat_utils import settings_dataclass, CachableSettings
+from tanat_utils import settings_dataclass, Cachable, CachableSettings
 
 # =============================================================================
 # Fixtures
@@ -37,7 +37,7 @@ class UpdateProcessor(CachableSettings):
         super().__init__(settings)
         self.compute_count = 0
 
-    @CachableSettings.cached_method()
+    @Cachable.cached_method()
     def compute(self, x):
         self.compute_count += 1
         return x * self.settings.value
