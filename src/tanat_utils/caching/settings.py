@@ -81,14 +81,7 @@ def settings_dataclass(
             original_init(self, **filtered)
 
         def model_dump(self, *, mode="python", **dump_kwargs):
-            """
-            Dump the settings to a dictionary using Pydantic serialization.
-            Mimics BaseModel.model_dump().
-
-            Args:
-                mode: 'python' (dict of objects) or 'json' (dict of serializable types)
-                **dump_kwargs: Additional arguments passed to TypeAdapter.dump_python
-            """
+            """Dump settings to a dict via Pydantic serialization."""
             return _adapter.dump_python(self, mode=mode, **dump_kwargs)
 
         decorated.__init__ = new_init
