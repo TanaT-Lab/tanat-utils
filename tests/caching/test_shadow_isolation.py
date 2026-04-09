@@ -7,7 +7,7 @@ Verifies that shadow views have perfectly isolated caches:
 - Shared non-settings attributes remain accessible
 """
 
-from tanat_utils import settings_dataclass, CachableSettings
+from tanat_utils import settings_dataclass, CachableSettings, Cachable, SettingsMixin
 
 # =============================================================================
 # Fixtures
@@ -31,7 +31,8 @@ class IsolationProcessor(CachableSettings):
         self.shared_data = shared_data or [1, 2, 3]  # Shared across shadows
         self.compute_count = 0
 
-    @CachableSettings.cached_method(shadow_on=["**kwargs"])
+    @SettingsMixin.shadow_dispatch
+    @Cachable.cached_method()
     def compute(self, x, **kwargs):
         """Computation that uses settings.multiplier."""
         self.compute_count += 1
