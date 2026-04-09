@@ -11,7 +11,7 @@ Verifies that CachableSettings survives serialization:
 import pickle
 import time
 
-from tanat_utils import settings_dataclass, CachableSettings
+from tanat_utils import settings_dataclass, Cachable, CachableSettings, SettingsMixin
 
 # =============================================================================
 # Fixtures
@@ -35,21 +35,21 @@ class SerializableProcessor(CachableSettings):
         super().__init__(settings)
         self.compute_count = 0
 
-    @CachableSettings.cached_property
+    @Cachable.cached_property
     def cached_value(self):
         """Cached property that tracks computation."""
         self.compute_count += 1
         time.sleep(0.05)
         return f"value_{self.settings.factor}"
 
-    @CachableSettings.cached_method()
+    @Cachable.cached_method()
     def compute(self, x):
         """Cached method that tracks computation."""
         self.compute_count += 1
         time.sleep(0.05)
         return x * self.settings.factor
 
-    @CachableSettings.cached_method(shadow_on=["**kwargs"])
+    @SettingsMixin.shadow_dispatch
     def compute_with_shadow(self, x, **kwargs):
         """Cached method with shadow support."""
         self.compute_count += 1
