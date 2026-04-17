@@ -9,7 +9,7 @@ Verifies proper memory management of caches:
 - LRU ordering is maintained
 """
 
-from tanat_utils import settings_dataclass, CachableSettings, Cachable, SettingsMixin
+from tanat_utils import settings_dataclass, CachableSettings, Cachable
 
 # =============================================================================
 # Fixtures
@@ -34,10 +34,9 @@ class SmallCacheProcessor(CachableSettings):
         super().__init__(settings)
         self.compute_count = 0
 
-    @SettingsMixin.shadow_dispatch
     @Cachable.cached_method()
     def compute(self, x, **kwargs):
-        """Computation with shadow support."""
+        """Computation with caching."""
         self.compute_count += 1
         return x * self.settings.param
 
@@ -223,155 +222,3 @@ class TestMainCacheEdgeCases:
             processor.compute(i)
 
         assert len(processor._cache) == 4
-
-
-# =============================================================================
-# Shadow Cache LRU Tests (existing)
-# =============================================================================
-
-
-class TestShadowCacheLRU:
-    """Test suite for shadow cache LRU eviction."""
-
-    def test_shadow_cache_respects_size_limit(self):
-        """Shadow cache doesn't exceed SHADOW_CACHE_SIZE."""
-        processor = SmallCacheProcessor()
-
-        # Create more shadows than cache size
-        for i in range(10):
-            processor.compute(5, param=i * 10)
-
-        # Shadow cache should be at limit
-        assert len(processor._shadow_cache) == processor.SHADOW_CACHE_SIZE
-
-    def test_oldest_shadow_is_evicted(self):
-        """First-in shadow is evicted when cache is full."""
-        processor = SmallCacheProcessor()
-
-        # Fill cache: param=10, 20, 30
-        processor.compute(5, param=10)
-        processor.compute(5, param=20)
-        processor.compute(5, param=30)
-
-        # Get fingerprints of current shadows
-        fingerprints_before = set(processor._shadow_cache.keys())
-        assert len(fingerprints_before) == 3
-
-        # Add one more: param=40 (should evict param=10)
-        processor.compute(5, param=40)
-
-        fingerprints_after = set(processor._shadow_cache.keys())
-
-        # One fingerprint was removed, one added
-        assert len(fingerprints_after) == 3
-        evicted = fingerprints_before - fingerprints_after
-        assert len(evicted) == 1
-
-    def test_recently_used_shadow_retained(self):
-        """Accessing a shadow moves it to end of LRU, preventing eviction."""
-        processor = SmallCacheProcessor()
-
-        # Create 3 shadows: A, B, C
-        processor.compute(5, param=10)  # A
-        processor.compute(5, param=20)  # B
-        processor.compute(5, param=30)  # C
-
-        # Re-access A (moves to end)
-        processor.compute(5, param=10)  # A touched
-
-        # Add D - should evict B (now oldest), not A
-        processor.compute(5, param=40)  # D
-
-        # Check which settings are still in cache
-        cached_params = [s.settings.param for s in processor._shadow_cache.values()]
-
-        # A (10), C (30), D (40) should remain; B (20) evicted
-        assert 10 in cached_params  # A retained (recently used)
-        assert 20 not in cached_params  # B evicted
-        assert 30 in cached_params  # C retained
-        assert 40 in cached_params  # D just added
-
-    def test_evicted_shadow_cache_destroyed(self):
-        """Evicted shadow's internal cache is no longer referenced."""
-        processor = SmallCacheProcessor()
-
-        # Create and populate shadows
-        for i in range(3):
-            processor.compute(5, param=(i + 1) * 10)
-
-        # Get reference to first shadow before eviction
-        first_fp = list(processor._shadow_cache.keys())[0]
-        first_shadow = processor._shadow_cache[first_fp]
-        first_shadow_cache_id = id(first_shadow._cache)
-
-        # Evict by adding more shadows
-        for i in range(3, 6):
-            processor.compute(5, param=(i + 1) * 10)
-
-        # First shadow should no longer be in cache
-        assert first_fp not in processor._shadow_cache
-
-        # Current shadows have different cache objects
-        current_cache_ids = [id(s._cache) for s in processor._shadow_cache.values()]
-        assert first_shadow_cache_id not in current_cache_ids
-
-    def test_same_settings_reuses_shadow_no_eviction(self):
-        """Accessing same settings reuses shadow, doesn't create new one."""
-        processor = SmallCacheProcessor()
-
-        # Create 3 shadows
-        processor.compute(5, param=10)
-        processor.compute(5, param=20)
-        processor.compute(5, param=30)
-
-        # Access same settings multiple times
-        for _ in range(10):
-            processor.compute(5, param=20)
-
-        # Still only 3 shadows
-        assert len(processor._shadow_cache) == 3
-
-
-class TestShadowLRUOrdering:
-    """Test shadow LRU ordering mechanics."""
-
-    def test_lru_order_updated_on_access(self):
-        """Shadow moves to end when accessed."""
-        processor = SmallCacheProcessor()
-
-        # Create A, B, C in order
-        processor.compute(5, param=10)  # A
-        processor.compute(5, param=20)  # B
-        processor.compute(5, param=30)  # C
-
-        order_initial = list(processor._shadow_cache.keys())
-
-        # Access A (should move to end)
-        processor.compute(5, param=10)
-
-        order_after = list(processor._shadow_cache.keys())
-
-        # A moved from first to last
-        assert order_initial[0] == order_after[-1]
-
-    def test_lru_eviction_order_sequence(self):
-        """Verify exact eviction sequence with parameter sweep."""
-        processor = SmallCacheProcessor()
-
-        eviction_order = []
-
-        # Create 3 shadows
-        for i in [10, 20, 30]:
-            processor.compute(5, param=i)
-
-        # Keep adding and track what gets evicted
-        for i in [40, 50, 60]:
-            before = set(s.settings.param for s in processor._shadow_cache.values())
-            processor.compute(5, param=i)
-            after = set(s.settings.param for s in processor._shadow_cache.values())
-            evicted = before - after
-            if evicted:
-                eviction_order.append(evicted.pop())
-
-        # Should evict 10, 20, 30 in order
-        assert eviction_order == [10, 20, 30]

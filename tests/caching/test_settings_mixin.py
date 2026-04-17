@@ -2,10 +2,8 @@
 Tests for SettingsMixin - standalone settings management without cache.
 
 Verifies:
-- SettingsMixin works without _cache or _lock
-- Non-settings kwargs are silently filtered in _get_or_create_shadow
-- Empty/invalid overrides return self (no shadow created)
-- update_settings only clears _shadow_cache, not any compute cache
+- update_settings works correctly
+- _resolve_settings returns correct settings with/without overrides
 - to_config / from_config work without Cachable
 """
 
@@ -36,148 +34,67 @@ class SimpleProcessor(SettingsMixin):
     def __init__(self, alpha=0.5, method="default"):
         super().__init__(settings=MixinSettings(alpha=alpha, method=method))
 
-    @SettingsMixin.shadow_dispatch
     def compute(self, x, **kwargs):
-        """Shadow dispatch: settings kwargs consumed, self = correct target."""
-        return x * self.settings.alpha
-
-
-class VerboseProcessor(SettingsMixin):
-    """Processor whose compute returns (result, verbose) for passthrough tests."""
-
-    SETTINGS_CLASS = MixinSettings
-
-    def __init__(self):
-        super().__init__()
-
-    @SettingsMixin.shadow_dispatch
-    def compute(self, x, verbose=False, **kwargs):
-        """Returns tuple so tests can assert both value and passthrough."""
-        return (x * self.settings.alpha, verbose)
-
-
-class ConfigProcessor(SettingsMixin):
-    """Processor with standard settings init for config serialisation tests."""
-
-    SETTINGS_CLASS = MixinSettings
-
-    def __init__(self, settings=None):
-        super().__init__(settings)
+        """Explicit settings threading via _resolve_settings."""
+        settings = self._resolve_settings(kwargs)
+        return x * settings.alpha
 
 
 # =============================================================================
-# Test: shadow_dispatch decorator
+# Test: _resolve_settings
 # =============================================================================
 
 
-class TestShadowDispatch:
-    """shadow_dispatch separates settings kwargs from method kwargs."""
+class TestResolveSettings:
+    """_resolve_settings returns a settings copy with overrides applied."""
 
-    def test_no_kwargs_uses_self(self):
-        """No kwargs → self, no shadow created."""
+    def test_no_override_returns_same_object(self):
+        """Empty overrides return the original settings object unchanged."""
         proc = SimpleProcessor(alpha=0.5)
 
-        result = proc.compute(10)
+        result = proc._resolve_settings({})
 
-        assert result == 5.0
-        assert len(proc._shadow_cache) == 0
+        assert result is proc.settings
 
-    def test_settings_kwarg_creates_shadow(self):
-        """A settings-matching kwarg creates a shadow and is consumed."""
+    def test_valid_override_returns_copy(self):
+        """A matching override returns a new settings instance with the value applied."""
         proc = SimpleProcessor(alpha=0.5)
 
-        result = proc.compute(10, alpha=0.8)
+        result = proc._resolve_settings({"alpha": 0.8})
 
-        assert result == 8.0
-        assert len(proc._shadow_cache) == 1
+        assert result is not proc.settings
+        assert result.alpha == 0.8
+        assert proc.settings.alpha == 0.5  # original unchanged
 
-    def test_non_settings_kwarg_passes_through(self):
-        """A non-settings kwarg doesn't trigger a shadow and reaches the method."""
-        proc = VerboseProcessor()
-        result = proc.compute(10, verbose=True)
-
-        assert result == (5.0, True)  # verbose passed through, no shadow
-        assert len(proc._shadow_cache) == 0
-
-    def test_mixed_kwargs_shadow_created_extra_passed_through(self):
-        """Settings kwargs consumed for shadow; non-settings kwargs reach method."""
-        proc = VerboseProcessor()
-        result = proc.compute(10, alpha=0.8, verbose=True)
-
-        assert result == (8.0, True)  # alpha consumed -> shadow; verbose passed through
-        assert len(proc._shadow_cache) == 1
-
-    def test_same_override_reuses_shadow(self):
-        """Same settings override reuses the cached shadow."""
+    def test_unknown_keys_are_ignored(self):
+        """Non-settings keys are silently filtered out."""
         proc = SimpleProcessor(alpha=0.5)
 
-        proc.compute(10, alpha=0.8)
-        proc.compute(20, alpha=0.8)
+        result = proc._resolve_settings({"alpha": 0.9, "verbose": True})
 
-        assert len(proc._shadow_cache) == 1  # single shadow reused
+        assert result.alpha == 0.9
+        assert not hasattr(result, "verbose")
 
+    def test_none_settings_returns_none(self):
+        """_resolve_settings returns None when _settings is None."""
 
-# =============================================================================
-# Test: shadow_dispatch with non-settings kwargs
-# =============================================================================
+        class NoSettingsProc(SettingsMixin):
+            SETTINGS_CLASS = None
 
+        proc = NoSettingsProc()
 
-class TestShadowDispatchUnknownFields:
-    """shadow_dispatch routes non-settings kwargs to the method, not to the shadow."""
+        result = proc._resolve_settings({"alpha": 0.5})
 
-    def test_unknown_kwarg_passes_through_no_shadow(self):
-        """Non-settings kwarg reaches the method unchanged, no shadow is created."""
-        proc = VerboseProcessor()
+        assert result is None
 
-        result = proc.compute(10, verbose=True)
-
-        assert result == (5.0, True)
-        assert len(proc._shadow_cache) == 0
-
-    def test_mixed_kwargs_shadow_for_settings_passthrough_for_rest(self):
-        """Settings kwarg creates shadow; non-settings kwarg still reaches the method."""
-        proc = VerboseProcessor()
-
-        result = proc.compute(10, alpha=0.8, verbose=True)
-
-        assert result == (8.0, True)  # shadow applied alpha; verbose passed through
-        assert len(proc._shadow_cache) == 1
-
-    def test_valid_settings_kwarg_creates_shadow_no_warning(self, recwarn):
-        """Valid settings kwarg creates a shadow with no warning."""
+    def test_overrides_used_in_compute(self):
+        """Override applied through _resolve_settings affects computation."""
         proc = SimpleProcessor(alpha=0.5)
 
         result = proc.compute(10, alpha=0.8)
 
         assert result == 8.0
-        assert len(proc._shadow_cache) == 1
-        assert len(recwarn) == 0
-
-
-# =============================================================================
-# Test: no valid override → return self
-# =============================================================================
-
-
-class TestShadowReturnsSelfIfEmpty:
-    """_get_or_create_shadow returns self when overrides resolve to nothing."""
-
-    def test_empty_overrides_returns_self(self):
-        """Empty dict → self."""
-        proc = SimpleProcessor()
-
-        result = proc._get_or_create_shadow({})
-
-        assert result is proc
-
-    def test_no_kwargs_in_compute_uses_self(self):
-        """compute() called without kwargs dispatches directly on self."""
-        proc = SimpleProcessor(alpha=2.0)
-
-        result = proc.compute(5)
-
-        assert result == 10.0
-        assert len(proc._shadow_cache) == 0
+        assert proc.settings.alpha == 0.5  # original unchanged
 
 
 # =============================================================================
@@ -213,16 +130,6 @@ class TestSettingsMixinWithoutCache:
 
         assert proc.cache_fingerprint is not None
 
-    def test_shadow_has_no_cache(self):
-        """Shadows created by SettingsMixin alone also have no _cache."""
-        proc = SimpleProcessor(alpha=0.5)
-
-        shadow = proc._get_or_create_shadow({"alpha": 0.9})
-
-        assert shadow is not proc
-        assert not hasattr(shadow, "_cache")
-        assert not hasattr(shadow, "_lock")
-
     def test_repr(self):
         """__repr__ works without cache."""
         proc = SimpleProcessor(alpha=0.3)
@@ -238,19 +145,7 @@ class TestSettingsMixinWithoutCache:
 
 
 class TestUpdateDoesNotClearCache:
-    """SettingsMixin.update_settings only clears _shadow_cache."""
-
-    def test_shadow_cache_cleared_on_update(self):
-        """update_settings clears _shadow_cache."""
-        proc = SimpleProcessor(alpha=0.5)
-
-        # Create a shadow
-        proc._get_or_create_shadow({"alpha": 0.9})
-        assert len(proc._shadow_cache) == 1
-
-        proc.update_settings(alpha=0.3)
-
-        assert len(proc._shadow_cache) == 0
+    """SettingsMixin.update_settings works correctly."""
 
     def test_no_cache_interference(self):
         """update_settings on SettingsMixin does not attempt to clear _cache."""
@@ -291,7 +186,7 @@ class TestConfigSerialization:
 
     def test_to_config_returns_settings(self):
         """to_config includes settings dict."""
-        proc = ConfigProcessor(MixinSettings(alpha=0.9, method="fast"))
+        proc = SimpleProcessor(alpha=0.9, method="fast")
 
         config = proc.to_config()
 
@@ -299,7 +194,7 @@ class TestConfigSerialization:
 
     def test_to_config_default_settings(self):
         """to_config with default settings."""
-        proc = ConfigProcessor()
+        proc = SimpleProcessor()
 
         config = proc.to_config()
 
@@ -309,25 +204,25 @@ class TestConfigSerialization:
         """from_config creates a working instance."""
         config = {"settings": {"alpha": 0.7, "method": "custom"}}
 
-        proc = ConfigProcessor.from_config(config)
+        proc = SimpleProcessor.from_config(config)
 
-        assert isinstance(proc, ConfigProcessor)
+        assert isinstance(proc, SimpleProcessor)
         assert proc.settings.alpha == 0.7
         assert proc.settings.method == "custom"
 
     def test_config_roundtrip(self):
         """to_config -> from_config preserves state."""
-        original = ConfigProcessor(MixinSettings(alpha=0.3, method="new"))
+        original = SimpleProcessor(alpha=0.3, method="new")
 
         config = original.to_config()
-        restored = ConfigProcessor.from_config(config)
+        restored = SimpleProcessor.from_config(config)
 
         assert restored.settings.alpha == original.settings.alpha
         assert restored.settings.method == original.settings.method
 
     def test_save_config(self, tmp_path):
         """save_config persists to disk as JSON."""
-        proc = ConfigProcessor(MixinSettings(alpha=0.4))
+        proc = SimpleProcessor(alpha=0.4)
         path = tmp_path / "config.json"
 
         proc.save_config(path)

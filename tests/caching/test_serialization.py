@@ -11,7 +11,7 @@ Verifies that CachableSettings survives serialization:
 import pickle
 import time
 
-from tanat_utils import settings_dataclass, Cachable, CachableSettings, SettingsMixin
+from tanat_utils import settings_dataclass, Cachable, CachableSettings
 
 # =============================================================================
 # Fixtures
@@ -47,12 +47,6 @@ class SerializableProcessor(CachableSettings):
         """Cached method that tracks computation."""
         self.compute_count += 1
         time.sleep(0.05)
-        return x * self.settings.factor
-
-    @SettingsMixin.shadow_dispatch
-    def compute_with_shadow(self, x, **kwargs):
-        """Cached method with shadow support."""
-        self.compute_count += 1
         return x * self.settings.factor
 
 
@@ -140,22 +134,6 @@ class TestPickleRoundTrip:
         result2 = restored.compute(10)
         assert result2 == 70
         assert restored.compute_count == 0  # Cache hit
-
-    def test_shadow_cache_survives_pickle(self):
-        """Shadow cache state after pickle (documents current behavior)."""
-        original = SerializableProcessor()
-
-        # Create shadows
-        original.compute_with_shadow(5, factor=20)
-        original.compute_with_shadow(5, factor=30)
-        shadow_count_before = len(original._shadow_cache)
-
-        # Pickle round-trip
-        restored = pickle.loads(pickle.dumps(original))
-
-        # Document actual behavior: shadow_cache is preserved or not
-        # The current implementation preserves shadow_cache through pickle
-        assert len(restored._shadow_cache) == shadow_count_before
 
 
 class TestMultiprocessingCompatibility:
