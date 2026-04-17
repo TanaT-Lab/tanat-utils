@@ -6,18 +6,16 @@ settings_dataclass decorator, SettingsMixin and CachableSettings mixin.
 from __future__ import annotations
 
 import dataclasses
-import functools
 import json
 import logging
 import warnings
-from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Callable
 
 from pydantic import ConfigDict, TypeAdapter
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 
-from .cachable import Cachable, _LazyRLock
+from .cachable import Cachable
 from .fingerprint import _serialize, fingerprint
 
 LOGGER = logging.getLogger(__name__)
@@ -125,14 +123,12 @@ class SettingsMixin:
     """
 
     SETTINGS_CLASS = None
-    SHADOW_CACHE_SIZE = 8
 
     def __init__(self, settings: Any = None) -> None:
         self._settings = self._validate_settings(settings)
         self._fingerprint = (
             fingerprint(self._settings) if self._settings is not None else None
         )
-        self._shadow_cache: OrderedDict = OrderedDict()
 
     def _validate_settings(self, settings: Any) -> Any:
         """Validate and normalize settings input."""
@@ -203,7 +199,6 @@ class SettingsMixin:
                 if not kwargs:
                     self._settings = settings
                     self._fingerprint = fingerprint(self._settings)
-                    self._shadow_cache.clear()
                     return self
                 kwargs = {**dataclasses.asdict(settings), **kwargs}
             else:
@@ -214,110 +209,32 @@ class SettingsMixin:
 
         self._settings = dataclasses.replace(self._settings, **kwargs)
         self._fingerprint = fingerprint(self._settings)
-        self._shadow_cache.clear()
         return self
 
     # -------------------------------------------------------------------------
-    # Shadow Views
+    # Settings Resolution
     # -------------------------------------------------------------------------
 
-    def _get_or_create_shadow(self, overrides: dict[str, Any]) -> SettingsMixin:
-        """
-        Get or create a shadow view with overridden settings.
+    def _resolve_settings(self, overrides: dict) -> Any:
+        """Return a settings copy with *overrides* applied.
 
-        Keys in *overrides* that do not match a settings field are silently
-        ignored.  Returns ``self`` when no valid override remains.
-        Uses an LRU cache (keyed by fingerprint) to reuse shadows.
+        Unknown keys are silently ignored.
+        Returns ``self.settings`` unchanged when no override matches.
 
         Args:
             overrides: Mapping of field names to override values.
                 Non-settings keys are filtered out automatically.
-        """
-        if not overrides:
-            return self
 
-        # Filter to known settings fields
-        settings_fields = set(self._settings.__dataclass_fields__.keys())
-        valid = {k: v for k, v in overrides.items() if k in settings_fields}
+        Returns:
+            A settings instance (copy with overrides, or original if none match).
+        """
+        if not overrides or self._settings is None:
+            return self._settings
+        fields = set(self._settings.__dataclass_fields__.keys())
+        valid = {k: v for k, v in overrides.items() if k in fields}
         if not valid:
-            return self
-
-        new_settings = dataclasses.replace(self._settings, **valid)
-        new_fp = fingerprint(new_settings)
-
-        # LRU lookup
-        if new_fp in self._shadow_cache:
-            self._shadow_cache.move_to_end(new_fp)
-            return self._shadow_cache[new_fp]
-
-        # Create new shadow
-        shadow = object.__new__(self.__class__)
-        shadow.__dict__.update(self.__dict__)
-        # pylint: disable=protected-access
-        shadow._settings = new_settings
-        shadow._fingerprint = new_fp
-        shadow._shadow_cache = OrderedDict()
-
-        # LRU insert + eviction
-        self._shadow_cache[new_fp] = shadow
-        if len(self._shadow_cache) > self.SHADOW_CACHE_SIZE:
-            self._shadow_cache.popitem(last=False)
-
-        return shadow
-
-    @staticmethod
-    def shadow_dispatch(*args: str | Callable) -> Callable:
-        """
-        Decorator that transparently handles shadow dispatch from ``**kwargs``.
-
-        Settings-matching kwargs are consumed to create (or reuse) a shadow
-        view; the method body receives only the remaining kwargs, with ``self``
-        already pointing to the correct target (shadow or original).
-
-        By default all settings fields are dispatched. Pass field names to
-        restrict which kwargs trigger a shadow::
-
-            @SettingsMixin.shadow_dispatch
-            @Cachable.cached_method()
-            def compute(self, x, **kwargs):
-                return x * self.settings.alpha
-
-            @SettingsMixin.shadow_dispatch("alpha")
-            @Cachable.cached_method()
-            def compute(self, x, **kwargs):
-                # only 'alpha' triggers a shadow; other settings kwargs
-                # pass through to the method body unchanged.
-                return x * self.settings.alpha
-        """
-
-        def _build(
-            method: Callable, dispatch_fields: frozenset[str] | None
-        ) -> Callable:
-            @functools.wraps(method)
-            def wrapper(self, *w_args, **kwargs):
-                if kwargs and self._settings is not None:
-                    settings_fields = set(self._settings.__dataclass_fields__.keys())
-                    consumed = (
-                        dispatch_fields & settings_fields
-                        if dispatch_fields is not None
-                        else settings_fields
-                    )
-                    target = self._get_or_create_shadow(
-                        {k: v for k, v in kwargs.items() if k in consumed}
-                    )
-                    remaining = {k: v for k, v in kwargs.items() if k not in consumed}
-                    return method(target, *w_args, **remaining)
-                return method(self, *w_args, **kwargs)
-
-            return wrapper
-
-        # @shadow_dispatch  (no parentheses)
-        if len(args) == 1 and callable(args[0]):
-            return _build(args[0], dispatch_fields=None)
-
-        # @shadow_dispatch("alpha", "beta")  or  @shadow_dispatch()
-        dispatch_fields = frozenset(args) if args else None
-        return lambda method: _build(method, dispatch_fields)
+            return self._settings
+        return dataclasses.replace(self._settings, **valid)
 
     # -------------------------------------------------------------------------
     # Config Serialization
@@ -357,11 +274,7 @@ class SettingsMixin:
                 raise ValueError(f"{cls.__name__} is not Registrable")
             target_cls = cls.get_registered(type_name)  # pylint: disable=no-member
 
-        return (
-            target_cls(settings=settings_dict, **kwargs)
-            if settings_dict
-            else target_cls(**kwargs)
-        )
+        return target_cls(**settings_dict, **kwargs)
 
     def save_config(self, path: str | Path) -> dict[str, Any]:
         """Persist the current configuration to disk."""
@@ -414,20 +327,8 @@ class CachableSettings(SettingsMixin, Cachable):
         Cachable.__init__(self)  # initialises _cache and _lock
 
     def update_settings(self, settings: Any = None, **kwargs: Any) -> CachableSettings:
-        """Update settings, clear shadow cache AND computation cache."""
+        """Update settings and clear computation cache."""
         with self._lock:
             super().update_settings(settings, **kwargs)
             self.clear_cache()
         return self
-
-    def _get_or_create_shadow(self, overrides: dict[str, Any]) -> CachableSettings:
-        """Shadow view also gets its own computation cache."""
-        shadow = super()._get_or_create_shadow(overrides)
-        # Newly created shadows share the parent's _cache reference; give them
-        # their own.  LRU-retrieved shadows already have a separate _cache.
-        if (
-            shadow is not self and shadow._cache is self._cache
-        ):  # pylint: disable=protected-access
-            shadow._cache = OrderedDict()  # pylint: disable=protected-access
-            shadow._lock = _LazyRLock()  # pylint: disable=protected-access
-        return shadow
