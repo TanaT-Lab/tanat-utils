@@ -37,6 +37,11 @@ class BaseMetric(CachableSettings, Registrable):
     _REGISTER = {}
     SETTINGS_CLASS = MetricSettings
 
+    def __init__(self, normalize: bool = False, threshold: float = 0.0):
+        super().__init__(
+            settings=MetricSettings(normalize=normalize, threshold=threshold)
+        )
+
     def compute(self, x, y):
         raise NotImplementedError
 
@@ -80,7 +85,7 @@ class TestRegistrableCachable:
 
     def test_settings_work(self):
         """Settings are initialized correctly."""
-        metric = EuclideanMetric(MetricSettings(normalize=True))
+        metric = EuclideanMetric(normalize=True)
         assert metric.settings.normalize is True
 
     def test_caching_works(self):
@@ -128,7 +133,7 @@ class TestPydanticWithSettings:
         class Config(BaseModel):
             metric: BaseMetric
 
-        metric = EuclideanMetric(MetricSettings(normalize=True, threshold=0.5))
+        metric = EuclideanMetric(normalize=True, threshold=0.5)
         config = Config(metric=metric)
 
         assert config.metric.settings.normalize is True
@@ -171,7 +176,7 @@ class TestSerialization:
 
     def test_pickle_roundtrip(self):
         """Pickle serialization preserves both registration and settings."""
-        metric = EuclideanMetric(MetricSettings(normalize=True))
+        metric = EuclideanMetric(normalize=True)
 
         # Populate cache
         metric.compute([0, 0], [3, 4])
@@ -273,7 +278,7 @@ class TestConfigSerialization:
 
     def test_to_config_includes_type_and_settings(self):
         """to_config returns type and settings."""
-        metric = EuclideanMetric(MetricSettings(normalize=True, threshold=0.5))
+        metric = EuclideanMetric(normalize=True, threshold=0.5)
         config = metric.to_config()
 
         assert config == {
@@ -321,7 +326,7 @@ class TestConfigSerialization:
 
     def test_config_roundtrip(self):
         """to_config → from_config roundtrip preserves state."""
-        original = EuclideanMetric(MetricSettings(normalize=True, threshold=0.75))
+        original = EuclideanMetric(normalize=True, threshold=0.75)
         config = original.to_config()
         restored = BaseMetric.from_config(config)
 
@@ -331,7 +336,7 @@ class TestConfigSerialization:
 
     def test_json_roundtrip(self):
         """JSON serialization roundtrip."""
-        metric = EuclideanMetric(MetricSettings(normalize=True))
+        metric = EuclideanMetric(normalize=True)
         json_str = json.dumps(metric.to_config())
         restored = BaseMetric.from_config(json.loads(json_str))
 
@@ -370,9 +375,7 @@ class TestPydanticDictValidation:
         class Config(BaseModel):
             metric: BaseMetric
 
-        original = Config(
-            metric=EuclideanMetric(MetricSettings(normalize=True, threshold=0.5))
-        )
+        original = Config(metric=EuclideanMetric(normalize=True, threshold=0.5))
         json_str = original.model_dump_json()
         restored = Config.model_validate_json(json_str)
 
