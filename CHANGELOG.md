@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v0.0.5] - Remove shadow dispatch
+
+### Added
+
+- `SettingsMixin._resolve_settings(overrides)`: returns a settings copy with overrides applied (unknown keys silently ignored)
+
+### Removed
+
+- `shadow_dispatch` decorator and all shadow cache machinery (`_get_or_create_shadow`, `_shadow_cache`, `SHADOW_CACHE_SIZE`)
+- `CachableSettings._get_or_create_shadow` override
+- `test_shadow_isolation.py` (entire file)
+- All shadow-related tests in `test_settings_mixin.py`, `test_lru_eviction.py`, `test_serialization.py`
+
+### Changed
+
+- `SettingsMixin.update_settings` no longer clears `_shadow_cache` (removed)
+- `CachableSettings.update_settings` docstring simplified
+- `from_config` simplified: single constructor call path
+- Test fixtures updated to use direct constructor kwargs instead of `settings=` parameter
+
 ## [v0.0.4] - Mixin refactor
 
 ### Added
