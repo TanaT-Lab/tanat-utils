@@ -121,12 +121,12 @@ class TestUnregisteredErrors:
     def test_unregistered_raises_error(self):
         """Requesting unregistered name raises UnregisteredTypeError."""
         with pytest.raises(UnregisteredTypeError):
-            BaseMetric.get_registered("nonexistent", retry_with_reload=False)
+            BaseMetric.get_registered("nonexistent")
 
     def test_close_match_suggestion(self):
         """Error message suggests close matches."""
         with pytest.raises(UnregisteredTypeError, match="Did you mean"):
-            BaseMetric.get_registered("euclidien", retry_with_reload=False)
+            BaseMetric.get_registered("euclidien")
 
     def test_empty_name_raises_error(self):
         """Empty registration name raises InvalidRegistrationNameError."""
