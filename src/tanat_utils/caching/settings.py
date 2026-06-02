@@ -12,7 +12,7 @@ import warnings
 from pathlib import Path
 from typing import Any, Callable
 
-from pydantic import ConfigDict, TypeAdapter
+from pydantic import ConfigDict, model_validator
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 
 from .cachable import Cachable
@@ -57,31 +57,33 @@ def settings_dataclass(
         config = DEFAULT_CONFIG
 
     def decorator(cls):
-        is_kw_only = kwargs.get("kw_only", config.get("kw_only", True))
-        decorated = pydantic_dataclass(config=config, **kwargs, kw_only=is_kw_only)(cls)
+        @model_validator(mode="before")
+        @classmethod
+        def _warn_unknown(cls_, values):
+            if isinstance(values, dict):
+                known = set(cls.__annotations__)
+                extra = set(values) - known
+                if extra:
+                    warnings.warn(
+                        f"{cls.__name__}: Unknown fields ignored: {extra}",
+                        UserWarning,
+                        stacklevel=4,
+                    )
+            return values
 
-        # Cache the TypeAdapter for performance
-        _adapter = TypeAdapter(decorated)
-
-        original_init = decorated.__init__
-        field_names = set(decorated.__pydantic_fields__.keys())
-
-        def new_init(self, **kwargs):  # pylint: disable=unused-argument
-            extra = set(kwargs.keys()) - field_names
-            if extra:
-                warnings.warn(
-                    f"{cls.__name__}: Unknown fields ignored: {extra}",
-                    UserWarning,
-                    stacklevel=2,
-                )
-            filtered = {k: v for k, v in kwargs.items() if k in field_names}
-            original_init(self, **filtered)
+        cls.__pydantic_validator_before__ = _warn_unknown
+        effective_config = config if config is not None else DEFAULT_CONFIG
+        is_kw_only = kwargs.pop("kw_only", effective_config.get("kw_only", True))
+        decorated = pydantic_dataclass(
+            config=effective_config, kw_only=is_kw_only, **kwargs
+        )(cls)
 
         def model_dump(self, *, mode="python", **dump_kwargs):
             """Dump settings to a dict via Pydantic serialization."""
-            return _adapter.dump_python(self, mode=mode, **dump_kwargs)
+            return self.__pydantic_serializer__.to_python(
+                self, mode=mode, **dump_kwargs
+            )
 
-        decorated.__init__ = new_init
         decorated.model_dump = model_dump
         return decorated
 
