@@ -12,9 +12,5 @@ class InvalidRegistrationNameError(RegistryError):
     """Raised when a registration name is invalid."""
 
 
-class RegistryImportError(RegistryError):
-    """Raised when there is an error importing subtypes from a module."""
-
-
 class UnregisteredTypeError(RegistryError, ValueError):
     """Raised when a requested registration name is not found in the registry."""
