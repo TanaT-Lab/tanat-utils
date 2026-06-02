@@ -9,10 +9,10 @@
 #   ./scripts/extract_changelog.sh v0.0.1
 #   GITHUB_REF_NAME=v0.0.1 ./scripts/extract_changelog.sh
 
-set -e
+set -euo pipefail
 
-# Get version from argument or environment
-VERSION="${1:-$GITHUB_REF_NAME}"
+# Get version from argument, environment, or current git tag
+VERSION="${1:-${GITHUB_REF_NAME:-$(git describe --tags --exact-match 2>/dev/null || true)}}"
 
 if [ -z "$VERSION" ]; then
     echo "Error: No version provided. Pass as argument or set GITHUB_REF_NAME." >&2
