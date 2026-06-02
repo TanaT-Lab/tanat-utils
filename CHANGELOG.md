@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v0.0.6] - June 2026 - Internal simplification
+
+### Changed
+- `settings_dataclass`: unknown-field warning moved to a native `model_validator(mode='before')`
+- `Cachable._lock` is now a plain `threading.RLock` (was `_LazyRLock`)
+- `Registrable.get_registered()`: `retry_with_reload` parameter removed
+
+### Removed
+- `_LazyRLock` class, `RegistryImportError` exception
+- `Registrable` filesystem lazy-reload infrastructure (`_find_modules`, `_import_types`,
+  `register_subtypes`, `reload`, `_try_reload_and_get`, `_TYPE_SUBMODULE`)
+
 ## [v0.0.5] - Remove shadow dispatch
 
 ### Added
