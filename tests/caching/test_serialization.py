@@ -100,23 +100,19 @@ class TestPickleRoundTrip:
         assert restored.compute_count == original_count
 
     def test_lock_reinstantiates_after_pickle(self):
-        """_LazyRLock properly reinstantiates after deserialization."""
+        """Lock is properly reinstantiated after deserialization."""
         original = SerializableProcessor()
         _ = original.cached_value  # Trigger lock creation
 
         # Pickle round-trip
         restored = pickle.loads(pickle.dumps(original))
 
-        # Lock should be a fresh _LazyRLock (internal _lock is None until used)
+        # Lock should be a fresh RLock
         assert restored._lock is not None
-        assert restored._lock._lock is None  # Lazy, not yet initialized
 
         # Using the lock should work
         with restored._lock:
             pass  # Should not raise
-
-        # Now internal lock exists
-        assert restored._lock._lock is not None
 
     def test_cached_methods_work_after_pickle(self):
         """Cached methods function correctly after deserialization."""
