@@ -15,13 +15,11 @@ cd -- "$DIR"
 # Setup virtual environment if needed
 if [[ ! -e ./venv ]]; then
   echo "Creating virtual environment..."
-  python3 -m venv venv
-  source ./venv/bin/activate
-  pip install --upgrade pip
-  pip install -e ".[test]"
-else
-  source ./venv/bin/activate
+  bash ./scripts/install_in_venv.sh
 fi
 
+# Activate the virtual environment
+source ./venv/bin/activate
+
 echo "Running tests..."
-pytest -vv --import-mode=importlib --cov=src/tanat_utils --cov-report=term tests/
+pytest -vv --import-mode=importlib --cov=src/tanat_utils --cov-report=xml --cov-report=term tests/
