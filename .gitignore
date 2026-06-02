@@ -6,3 +6,4 @@ version.py
 tmp/
 venv/
 .coverage
+coverage.xml
