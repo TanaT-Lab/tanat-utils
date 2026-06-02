@@ -11,114 +11,17 @@ This version provides a registry system for classes that:
 """
 
 from difflib import get_close_matches
-import importlib
-import inspect
 import logging
-import pathlib
 
 from pydantic_core import core_schema
 
 from .exceptions import (
     RegistryError,
     InvalidRegistrationNameError,
-    RegistryImportError,
     UnregisteredTypeError,
 )
 
 LOGGER = logging.getLogger(__name__)
-
-
-def _find_modules(search_path, base_package):
-    """
-    Find Python modules recursively and generate valid module names.
-
-    Args:
-        search_path: Path to search for modules
-        base_package: Base package name for imports
-
-    Returns:
-        List of fully qualified module names
-
-    Raises:
-        ImportError: If the search path doesn't exist or isn't a valid Python package
-    """
-    search_path = pathlib.Path(search_path).resolve()
-    if not search_path.exists():
-        raise ImportError(f"Module path not found: {search_path}")
-
-    if not (search_path / "__init__.py").exists():
-        raise ImportError(
-            f"Not a valid Python package (missing __init__.py): {search_path}"
-        )
-
-    # Find the package root by looking for the first parent with __init__.py
-    package_root = search_path
-    while (
-        package_root.parent.exists() and (package_root.parent / "__init__.py").exists()
-    ):
-        package_root = package_root.parent
-
-    modules = []
-    for file in search_path.rglob("*.py"):
-        if file.name == "__init__.py":
-            continue
-
-        try:
-            relative_path = file.relative_to(package_root)
-            module_parts = list(relative_path.with_suffix("").parts)
-
-            if base_package:
-                module_parts.insert(0, base_package)
-
-            modules.append(".".join(module_parts))
-
-        except ValueError as e:
-            LOGGER.warning("Failed to compute module name for %s: %s", file, e)
-
-    return modules
-
-
-def _import_types(suffix, base_class, submod="type"):
-    """
-    Import types from submodules dynamically.
-
-    Args:
-        suffix: Class name suffix to match (e.g., "Generator")
-        base_class: Base class whose location will be used to find types
-        submod: Subdirectory name to search in (default: "type")
-
-    Yields:
-        Classes that match the specified suffix and inherit from base_class
-
-    Raises:
-        ImportError: If the submodule path is not found
-    """
-    base_path = pathlib.Path(inspect.getfile(base_class)).parent
-    base_module = base_class.__module__.split(".")[0]
-
-    submod_path = (base_path / submod).resolve()
-    if not submod_path.exists():
-        raise ImportError(f"Submodule path not found: {submod_path}")
-
-    LOGGER.debug("Importing types from %s (resolved to %s)", submod, submod_path)
-
-    for module_name in _find_modules(submod_path, base_module):
-        try:
-            LOGGER.debug("Importing %s", module_name)
-            mod = importlib.import_module(module_name)
-
-            for name, cls in inspect.getmembers(mod):
-                if (
-                    name.endswith(suffix)
-                    and cls != base_class
-                    and inspect.isclass(cls)
-                    and issubclass(cls, base_class)
-                ):
-                    LOGGER.debug("Found %s", name)
-                    yield cls
-
-        except ImportError as e:
-            LOGGER.warning("Failed to import %s: %s", module_name, e)
 
 
 class Registrable:
@@ -141,7 +44,6 @@ class Registrable:
     """
 
     _REGISTER_NAME = "_REGISTER"
-    _TYPE_SUBMODULE = "../type"
 
     def __init_subclass__(cls, *, register_name=None):
         """
@@ -261,74 +163,29 @@ class Registrable:
         register[name] = cls
 
     @classmethod
-    def get_registered(cls, name, retry_with_reload=True, submod=None):
-        """
-        Get a registered class by name.
-
-        Performs case-insensitive lookup and suggests close matches if the exact name
-        is not found. If the name is not found and retry_with_reload is True,
-        attempts to reload the registry and try again.
+    def get_registered(cls, name: str):
+        """Get a registered class by name (case-insensitive).
 
         Args:
             name: String name of the registered class to retrieve
-            retry_with_reload: If True and name not found, reload registry and retry once
-            submod: Subdirectory name for reload if needed (default: None).
-            If None, uses cls._TYPE_SUBMODULE
 
         Returns:
             Type[Registrable]: The registered class
 
         Raises:
-            UnregisteredTypeError: If no class is registered with given name (even after reload),
+            UnregisteredTypeError: If no class is registered with the given name,
                     includes suggestions for close matches
         """
-
-        def raise_error(name, err):
-            close_matches = get_close_matches(name, cls.list_registered())
-            if close_matches:
-                error_msg = (
-                    f"No {cls.__name__} registered as '{name}'. "
-                    f"Did you mean '{close_matches[0]}'?"
-                )
-            else:
-                error_msg = f"No {cls.__name__} registered as '{name}'."
-            raise UnregisteredTypeError(error_msg) from err
-
         name = cls.validate_registration_name(name)
         register = cls._get_register()
-        if submod is None:
-            submod = cls._TYPE_SUBMODULE
-
         try:
             return register[name]
-        except KeyError as err:
-            if retry_with_reload:
-                try:
-                    return cls._try_reload_and_get(name, submod)
-                except (KeyError, RegistryImportError):
-                    pass
-
-            ## - retry_with_reload is False or reloading fails
-            raise_error(name, err)
-
-    @classmethod
-    def _try_reload_and_get(cls, name, submod):
-        """Try to reload registry and get registered class.
-
-        Args:
-            name: Name to look for after reload
-            submod: Submodule to reload from
-
-        Returns:
-            The registered class if found
-
-        Raises:
-            RegistryImportError: If submodule import fails
-            KeyError: If name not found after reload
-        """
-        LOGGER.debug("Trying to reload registry and search again.")
-        cls.register_subtypes(submod=submod)
-        return cls._get_register()[name]
+        except KeyError:
+            close_matches = get_close_matches(name, cls.list_registered())
+            msg = f"No {cls.__name__} registered as '{name}'."
+            if close_matches:
+                msg += f" Did you mean '{close_matches[0]}'?"
+            raise UnregisteredTypeError(msg) from None
 
     @classmethod
     def list_registered(cls):
@@ -344,63 +201,6 @@ class Registrable:
     def clear_registered(cls):
         """Clear all registrations from the registry."""
         cls._get_register().clear()
-
-    @classmethod
-    def register_subtypes(cls, submod=None):
-        """
-        Import and register subtypes from the specified subdirectory.
-
-        The registration is automatic through __init_subclass__, so this method
-        just needs to trigger the imports.
-
-        Args:
-            submod: Subdirectory name where subtypes are located (default: None).
-                If None, uses cls._TYPE_SUBMODULE
-
-        Returns:
-            tuple[type]: All registered subtype classes
-        """
-        if submod is None:
-            submod = cls._TYPE_SUBMODULE
-
-        if submod is None:  # if still None, nothing to do
-            return ()
-        return tuple(cls._import_subtypes(submod))
-
-    @classmethod
-    def reload(cls, submod=None, clear=True):
-        """
-        Reload the registration system by clearing and re-registering all subtypes.
-
-        The method will:
-        1. Clear all current registrations
-        2. Re-scan and re-register all subtypes from the specified directory
-
-        Args:
-            clear: If True, clears all current registrations
-            submod: Subdirectory name where subtypes are located (default: None).
-                If None, uses cls._TYPE_SUBMODULE
-        """
-        if clear:
-            cls.clear_registered()
-        cls.register_subtypes(submod)
-
-    @classmethod
-    def _import_subtypes(cls, submod):
-        """
-        Import and yield all subtypes defined in the specified subdirectory.
-
-        Args:
-            submod: Subdirectory name where subtypes are located.
-
-        Yields:
-            Subtype classes found in the subdirectory.
-        """
-        try:
-            yield from _import_types(cls.__name__, cls, submod=submod)
-        except ImportError as err:
-            LOGGER.debug("Failed to import subtypes: %s", err)
-            raise RegistryImportError("Failed to import subtypes. " + str(err)) from err
 
     # -------------------------------------------------------------------------
     # Pydantic Support
