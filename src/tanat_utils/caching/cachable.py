@@ -24,43 +24,13 @@ def _make_hashable(val: Any) -> Any:
     return val
 
 
-class _LazyRLock:
-    """
-    Thread-safe RLock that is created lazily and pickle-safe.
-    """
-
-    __slots__ = ("_lock",)
-
-    def __init__(self) -> None:
-        self._lock: threading.RLock | None = None
-
-    def _get_lock(self) -> threading.RLock:
-        # Local var avoids repeated attribute lookup
-        lock = self._lock
-        if lock is None:
-            self._lock = lock = threading.RLock()
-        return lock
-
-    def __enter__(self) -> Any:
-        return self._get_lock().__enter__()
-
-    def __exit__(self, *args: Any) -> bool | None:
-        return self._get_lock().__exit__(*args)
-
-    def __getstate__(self) -> dict[str, None]:
-        return {}
-
-    def __setstate__(self, state: dict[str, None]) -> None:
-        self._lock = None
-
-
 class Cachable:
     """
     Thread-safe LRU cache mixin.
 
     Provides ``cached_property`` and ``cached_method`` decorators backed by
     an :class:`~collections.OrderedDict` with configurable ``CACHE_SIZE``.
-    Pickle-safe: the lock is lazily recreated after deserialization.
+    Pickle-safe: the lock is recreated after deserialization.
 
     Example::
 
@@ -79,7 +49,7 @@ class Cachable:
 
     def __init__(self) -> None:
         self._cache: OrderedDict[str, Any] = OrderedDict()
-        self._lock = _LazyRLock()
+        self._lock: threading.RLock = threading.RLock()
 
     def clear_cache(self) -> None:
         """Clear all cached values."""
@@ -179,4 +149,4 @@ class Cachable:
     def __setstate__(self, state: dict[str, Any]) -> None:
         """Unpickle support - recreate lock."""
         self.__dict__.update(state)
-        self._lock = _LazyRLock()
+        self._lock = threading.RLock()
