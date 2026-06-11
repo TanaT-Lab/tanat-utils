@@ -11,12 +11,14 @@ from .caching import (
     CachableSettings,
     fingerprint,
 )
+from .check_version import check_latest_version
 from .display import DisplayIndentManager, DisplayMixin
 from .registrable import Registrable
 
 __all__ = [
     "settings_dataclass",
     "Cachable",
+    "check_latest_version",
     "SettingsMixin",
     "CachableSettings",
     "fingerprint",
