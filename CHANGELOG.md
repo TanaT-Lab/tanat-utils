@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v0.1.0] - June 2026
+
+**Version check utility**
+
+### Added
+- `check_latest_version(package_name)`: warns when a newer version is available on PyPI.
+
+### Notes
+- Bumped to v0.1.0 to align with tanat versioning convention
+
 ## [v0.0.6] - June 2026 - Internal simplification
 
 ### Changed
